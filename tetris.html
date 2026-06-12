@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ASCII Tetris</title>
+<style>
+  body {
+    background: #1a1a1a;
+    color: #f2f2f2;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+    font-family: "Helvetica Monospaced", "IBM Plex Mono", "Andale Mono", "Courier New", monospace;
+  }
+  pre {
+    font-size: 17px;
+    line-height: 1.2;
+    letter-spacing: 0.25em;
+    font-weight: 500;
+    text-transform: uppercase;
+    margin: 0;
+  }
+</style>
+</head>
+<body>
+<pre id="screen"></pre>
+<script>
+const COLS = 10, ROWS = 20;
+const SHAPES = {
+  I: [[1,1,1,1]],
+  O: [[1,1],[1,1]],
+  T: [[1,1,1],[0,1,0]],
+  S: [[0,1,1],[1,1,0]],
+  Z: [[1,1,0],[0,1,1]],
+  J: [[1,0,0],[1,1,1]],
+  L: [[0,0,1],[1,1,1]],
+};
+const KEYS = Object.keys(SHAPES);
+
+let board, piece, score, gameOver;
+
+function newPiece() {
+  const shape = SHAPES[KEYS[Math.floor(Math.random() * KEYS.length)]];
+  return { shape, x: Math.floor((COLS - shape[0].length) / 2), y: 0 };
+}
+
+function reset() {
+  board = Array.from({length: ROWS}, () => Array(COLS).fill(0));
+  piece = newPiece();
+  score = 0;
+  gameOver = false;
+}
+
+function collides(shape, px, py) {
+  for (let y = 0; y < shape.length; y++)
+    for (let x = 0; x < shape[y].length; x++)
+      if (shape[y][x]) {
+        const bx = px + x, by = py + y;
+        if (bx < 0 || bx >= COLS || by >= ROWS || (by >= 0 && board[by][bx])) return true;
+      }
+  return false;
+}
+
+function rotate(shape) {
+  return shape[0].map((_, i) => shape.map(row => row[i]).reverse());
+}
+
+function lock() {
+  piece.shape.forEach((row, y) => row.forEach((v, x) => {
+    if (v && piece.y + y >= 0) board[piece.y + y][piece.x + x] = 1;
+  }));
+  // clear full lines
+  board = board.filter(row => !row.every(v => v));
+  const cleared = ROWS - board.length;
+  while (board.length < ROWS) board.unshift(Array(COLS).fill(0));
+  score += [0, 100, 300, 500, 800][cleared];
+
+  piece = newPiece();
+  if (collides(piece.shape, piece.x, piece.y)) gameOver = true;
+}
+
+function drop() {
+  if (!collides(piece.shape, piece.x, piece.y + 1)) piece.y++;
+  else lock();
+}
+
+function draw() {
+  // copy board and stamp the falling piece onto it
+  const grid = board.map(row => row.slice());
+  piece.shape.forEach((row, y) => row.forEach((v, x) => {
+    if (v && piece.y + y >= 0) grid[piece.y + y][piece.x + x] = 2;
+  }));
+
+  let out = `TEXTRIS  SCORE ${score}\n\n`;
+  out += '+' + '--'.repeat(COLS) + '+\n';
+  for (const row of grid) {
+    out += '|' + row.map(v => v === 2 ? '()' : v ? '##' : ' .').join('') + '|\n';
+  }
+  out += '+' + '--'.repeat(COLS) + '+\n\n';
+  out += gameOver
+    ? 'GAME OVER\nR TO RESTART\n'
+    : 'ARROWS TO MOVE\nSPACE TO DROP\n';
+  document.getElementById('screen').textContent = out;
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') { reset(); draw(); return; }
+  if (gameOver) return;
+  if (e.key === 'ArrowLeft' && !collides(piece.shape, piece.x - 1, piece.y)) piece.x--;
+  else if (e.key === 'ArrowRight' && !collides(piece.shape, piece.x + 1, piece.y)) piece.x++;
+  else if (e.key === 'ArrowDown') drop();
+  else if (e.key === 'ArrowUp') {
+    const r = rotate(piece.shape);
+    if (!collides(r, piece.x, piece.y)) piece.shape = r;
+  }
+  else if (e.key === ' ') {
+    e.preventDefault();
+    while (!collides(piece.shape, piece.x, piece.y + 1)) piece.y++;
+    lock();
+  }
+  draw();
+});
+
+reset();
+draw();
+setInterval(() => { if (!gameOver) { drop(); draw(); } }, 500);
+</script>
+</body>
+</html>

@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ASCII Pong</title>
+<style>
+  body {
+    background: #1a1a1a;
+    color: #f2f2f2;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+    font-family: "Helvetica Monospaced", "IBM Plex Mono", "Andale Mono", "Courier New", monospace;
+  }
+  pre {
+    font-size: 9px;
+    line-height: 1.15;
+    letter-spacing: 0.12em;
+    font-weight: 500;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  #stage { position: relative; }
+  #bg {
+    position: absolute;
+    top: 0; left: 0;
+    opacity: 0.25;
+  }
+  #ball {
+    position: absolute;
+    background: #f2f2f2;
+    transition: transform 33ms linear;
+  }
+</style>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+</head>
+<body>
+<div id="stage">
+  <pre id="bg"></pre>
+  <pre id="screen"></pre>
+  <div id="ball"></div>
+</div>
+<script>
+const W = 80, H = 38;
+const PADDLE = 8;
+const WIN_SCORE = 7;
+const HEADER_LINES = 3; // title line + blank + top border
+
+// mode: 'menu' | 'solo' | 'host-wait' | 'host' | 'guest'
+let mode = 'menu';
+let playerY, cpuY, ball, playerScore, cpuScore, gameOver;
+let moveDir = 0;     // local player's input
+let remoteDir = 0;   // guest's input, as received by the host
+let flash = null;    // {who: 'L'|'R', toward, t} — point-scored animation
+
+let peer = null, conn = null;
+let shareLink = '', netStatus = '';
+let guestReady = false; // guest has received at least one state frame
+
+function serve(toward) {
+  ball = {
+    x: W / 2, y: H / 2,
+    vx: 1.1 * toward,
+    vy: (Math.random() - 0.5) * 1.1,
+  };
+}
+
+function reset() {
+  playerY = cpuY = (H - PADDLE) / 2;
+  playerScore = cpuScore = 0;
+  gameOver = false;
+  flash = null;
+  serve(Math.random() < 0.5 ? 1 : -1);
+}
+
+function step() {
+  // left paddle: local player
+  playerY = Math.max(0, Math.min(H - PADDLE, playerY + moveDir * 1.4));
+
+  if (mode === 'host') {
+    // right paddle: remote player
+    cpuY = Math.max(0, Math.min(H - PADDLE, cpuY + remoteDir * 1.4));
+  } else {
+    // right paddle: computer tracks the ball, capped speed so it can miss
+    const target = ball.y - PADDLE / 2;
+    if (cpuY < target) cpuY = Math.min(cpuY + 0.6, target);
+    else if (cpuY > target) cpuY = Math.max(cpuY - 0.6, target);
+    cpuY = Math.max(0, Math.min(H - PADDLE, cpuY));
+  }
+
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+
+  // walls
+  if (ball.y < 0) { ball.y = 0; ball.vy *= -1; }
+  if (ball.y > H - 1) { ball.y = H - 1; ball.vy *= -1; }
+
+  // left paddle at x=1
+  if (ball.x <= 1 && ball.vx < 0 && ball.y >= playerY - 1 && ball.y <= playerY + PADDLE) {
+    ball.x = 1;
+    ball.vx = Math.min(-ball.vx * 1.05, 2.2);
+    ball.vy += (ball.y - (playerY + PADDLE / 2)) * 0.12;
+  }
+  // right paddle at x=W-2
+  if (ball.x >= W - 2 && ball.vx > 0 && ball.y >= cpuY - 1 && ball.y <= cpuY + PADDLE) {
+    ball.x = W - 2;
+    ball.vx = Math.max(-ball.vx * 1.05, -2.2);
+    ball.vy += (ball.y - (cpuY + PADDLE / 2)) * 0.12;
+  }
+
+  // scoring
+  if (ball.x < 0) {
+    cpuScore++;
+    flash = { who: 'R', toward: 1, t: 36 };
+  } else if (ball.x > W - 1) {
+    playerScore++;
+    flash = { who: 'L', toward: -1, t: 36 };
+  }
+}
+
+// ---- networking ----
+
+function hostGame() {
+  if (typeof Peer === 'undefined') { netStatus = 'PEERJS FAILED TO LOAD — CHECK CONNECTION'; return; }
+  mode = 'host-wait';
+  netStatus = 'CONNECTING TO SERVER...';
+  const id = 'pong-' + Math.random().toString(36).slice(2, 8);
+  peer = new Peer(id);
+  peer.on('open', () => {
+    shareLink = location.href.split('#')[0] + '#' + id;
+    netStatus = 'WAITING FOR PLAYER 2...';
+    if (navigator.clipboard) navigator.clipboard.writeText(shareLink).catch(() => {});
+  });
+  peer.on('connection', c => {
+    if (conn) { c.close(); return; } // room is full
+    conn = c;
+    c.on('open', () => { remoteDir = 0; reset(); mode = 'host'; });
+    c.on('data', d => {
+      if (d.t === 'dir') remoteDir = d.v;
+      if (d.t === 'restart') reset();
+    });
+    c.on('close', () => dropped());
+  });
+  peer.on('error', e => { netStatus = 'ERROR: ' + e.type; });
+}
+
+function joinGame(roomId) {
+  if (typeof Peer === 'undefined') { netStatus = 'PEERJS FAILED TO LOAD — CHECK CONNECTION'; return; }
+  mode = 'guest';
+  guestReady = false;
+  netStatus = 'JOINING ' + roomId + '...';
+  peer = new Peer();
+  peer.on('open', () => {
+    conn = peer.connect(roomId);
+    conn.on('open', () => { netStatus = 'CONNECTED — WAITING FOR HOST...'; });
+    conn.on('data', d => {
+      if (d.t !== 's') return;
+      playerY = d.py; cpuY = d.cy;
+      ball.x = d.bx; ball.y = d.by;
+      playerScore = d.ps; cpuScore = d.cs;
+      gameOver = d.go;
+      flash = d.fw ? { who: d.fw, t: d.ft } : null;
+      guestReady = true;
+    });
+    conn.on('close', () => dropped());
+  });
+  peer.on('error', e => { netStatus = 'ERROR: ' + e.type; });
+}
+
+function dropped() {
+  if (peer) peer.destroy();
+  peer = conn = null;
+  guestReady = false;
+  shareLink = '';
+  mode = 'menu';
+  netStatus = 'OPPONENT DISCONNECTED';
+  reset();
+}
+
+function sendState() {
+  conn.send({
+    t: 's',
+    py: playerY, cy: cpuY,
+    bx: ball.x, by: ball.y,
+    ps: playerScore, cs: cpuScore,
+    go: gameOver,
+    fw: flash ? flash.who : null,
+    ft: flash ? flash.t : 0,
+  });
+}
+
+// ---- rendering ----
+
+function labels() {
+  if (mode === 'host') return ['YOU', 'P2'];
+  if (mode === 'guest') return ['P1', 'YOU'];
+  return ['YOU', 'CPU'];
+}
+
+function frame(grid, header, footer) {
+  let out = header + '\n\n';
+  out += '+' + '--'.repeat(W) + '+\n';
+  for (const row of grid) out += '|' + row.join('') + '|\n';
+  out += '+' + '--'.repeat(W) + '+\n\n';
+  out += footer;
+  return out;
+}
+
+function drawBackground() {
+  const grid = Array.from({length: H}, () => Array(W).fill(' .'));
+  for (let y = 0; y < H; y += 2) grid[y][Math.floor(W / 2)] = ' :';
+  // dots only — header/border/footer cells stay blank so the bright layer owns them
+  let out = '\n\n\n';
+  for (const row of grid) out += ' ' + row.join('') + '\n';
+  document.getElementById('bg').textContent = out;
+}
+
+function drawBall() {
+  const el = document.getElementById('ball');
+  const playing = mode === 'solo' || mode === 'host' || (mode === 'guest' && guestReady);
+  if (!playing || gameOver || flash) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const screen = document.getElementById('screen');
+  const charW = screen.getBoundingClientRect().width / (2 * W + 2);
+  const lineH = parseFloat(getComputedStyle(screen).lineHeight);
+  el.style.width = (2 * charW) + 'px';
+  el.style.height = lineH + 'px';
+  const px = (1 + ball.x * 2) * charW;
+  const py = (HEADER_LINES + ball.y) * lineH;
+  el.style.transform = `translate(${px}px, ${py}px)`;
+}
+
+function draw() {
+  // menu / waiting screens
+  if (mode === 'menu' || mode === 'host-wait' || (mode === 'guest' && !guestReady)) {
+    const grid = Array.from({length: H}, () => Array(W).fill('  '));
+    let header = 'PONG', footer = '';
+    if (mode === 'menu') {
+      footer = '1 — ONE PLAYER (VS CPU)\n2 — TWO PLAYER (SHARE A LINK)\n';
+      if (netStatus) footer += '\n' + netStatus + '\n';
+    } else {
+      header = 'PONG — TWO PLAYER';
+      footer = netStatus + '\n';
+      if (mode === 'host-wait' && shareLink) {
+        footer += 'SEND THIS LINK TO PLAYER 2 (COPIED TO CLIPBOARD):\n' + shareLink + '\n';
+      }
+    }
+    document.getElementById('screen').textContent = frame(grid, header, footer);
+    drawBall();
+    return;
+  }
+
+  const [leftName, rightName] = labels();
+  const grid = Array.from({length: H}, () => Array(W).fill('  '));
+  // paddles
+  for (let i = 0; i < PADDLE; i++) {
+    const py = Math.round(playerY) + i, cy = Math.round(cpuY) + i;
+    if (py >= 0 && py < H) grid[py][1] = '##';
+    if (cy >= 0 && cy < H) grid[cy][W - 2] = '##';
+  }
+
+  // point-scored flash: blink message in the middle of the court
+  if (flash && Math.floor(flash.t / 6) % 2 === 0) {
+    const msg = `POINT ${flash.who === 'L' ? leftName : rightName}`;
+    const row = Math.floor(H / 2), col = Math.floor((W - msg.length) / 2);
+    for (let i = 0; i < msg.length; i++) grid[row][col + i] = msg[i] + ' ';
+  }
+
+  const header = `PONG  ${leftName} ${playerScore}  ${rightName} ${cpuScore}`;
+  const winner = playerScore > cpuScore ? leftName : rightName;
+  let footer;
+  if (gameOver) {
+    footer = (winner === 'YOU' ? 'YOU WIN\n' : winner + ' WINS\n') + 'R TO RESTART\n';
+  } else {
+    footer = mode === 'guest'
+      ? 'ARROWS TO MOVE — YOU ARE THE RIGHT PADDLE\nFIRST TO ' + WIN_SCORE + '\n'
+      : 'ARROWS TO MOVE\nFIRST TO ' + WIN_SCORE + '\n';
+  }
+  document.getElementById('screen').textContent = frame(grid, header, footer);
+  drawBall();
+}
+
+// ---- input ----
+
+function setDir(d) {
+  if (moveDir === d) return;
+  moveDir = d;
+  if (mode === 'guest' && conn && conn.open) conn.send({t: 'dir', v: d});
+}
+
+document.addEventListener('keydown', e => {
+  if (mode === 'menu') {
+    if (e.key === '1') { netStatus = ''; mode = 'solo'; reset(); }
+    if (e.key === '2') { netStatus = ''; hostGame(); }
+    return;
+  }
+  if (e.key === 'r' || e.key === 'R') {
+    if (mode === 'guest') { if (conn && conn.open) conn.send({t: 'restart'}); }
+    else if (mode === 'solo' || mode === 'host') reset();
+    return;
+  }
+  if (e.key === 'ArrowUp') { e.preventDefault(); setDir(-1); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); setDir(1); }
+});
+document.addEventListener('keyup', e => {
+  if (e.key === 'ArrowUp' && moveDir === -1) setDir(0);
+  if (e.key === 'ArrowDown' && moveDir === 1) setDir(0);
+});
+
+// ---- main ----
+
+reset();
+drawBackground();
+if (location.hash.startsWith('#pong-')) joinGame(location.hash.slice(1));
+
+setInterval(() => {
+  if ((mode === 'solo' || mode === 'host') && !gameOver) {
+    if (flash) {
+      flash.t--;
+      if (flash.t <= 0) {
+        if (playerScore >= WIN_SCORE || cpuScore >= WIN_SCORE) gameOver = true;
+        else serve(flash.toward);
+        flash = null;
+      }
+    } else {
+      step();
+    }
+  }
+  if (mode === 'host' && conn && conn.open) sendState();
+  draw();
+}, 33);
+</script>
+</body>
+</html>
