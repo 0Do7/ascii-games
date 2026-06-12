@@ -209,6 +209,14 @@ function labels() {
   return ['YOU', 'CPU'];
 }
 
+let lastScreen = '';
+function setScreen(text) {
+  // skip identical re-renders so text selection (e.g. the share link) survives
+  if (text === lastScreen) return;
+  lastScreen = text;
+  document.getElementById('screen').textContent = text;
+}
+
 function frame(grid, header, footer) {
   let out = header + '\n\n';
   out += '+' + '--'.repeat(W) + '+\n';
@@ -261,7 +269,7 @@ function draw() {
         }
       }
     }
-    document.getElementById('screen').textContent = frame(grid, header, footer);
+    setScreen(frame(grid, header, footer));
     drawBall();
     return;
   }
@@ -292,7 +300,7 @@ function draw() {
       ? 'ARROWS TO MOVE — YOU ARE THE RIGHT PADDLE\nFIRST TO ' + WIN_SCORE + '\n'
       : 'ARROWS TO MOVE\nFIRST TO ' + WIN_SCORE + '\n';
   }
-  document.getElementById('screen').textContent = frame(grid, header, footer);
+  setScreen(frame(grid, header, footer));
   drawBall();
 }
 
