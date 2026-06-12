@@ -33,6 +33,11 @@
     background: #f2f2f2;
     transition: transform 33ms linear;
   }
+  #measure {
+    position: absolute;
+    top: 0; left: 0;
+    visibility: hidden;
+  }
 </style>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
@@ -41,6 +46,8 @@
   <pre id="bg"></pre>
   <pre id="screen"></pre>
   <div id="ball"></div>
+  <pre id="measure">##
+##</pre>
 </div>
 <script>
 const W = 80, H = 38;
@@ -222,9 +229,10 @@ function drawBall() {
   const playing = mode === 'solo' || mode === 'host' || (mode === 'guest' && guestReady);
   if (!playing || gameOver || flash) { el.style.display = 'none'; return; }
   el.style.display = 'block';
-  const screen = document.getElementById('screen');
-  const charW = screen.getBoundingClientRect().width / (2 * W + 2);
-  const lineH = parseFloat(getComputedStyle(screen).lineHeight);
+  // derive the real cell size from a hidden 2x2-char probe with identical styling
+  const probe = document.getElementById('measure').getBoundingClientRect();
+  const charW = probe.width / 2;
+  const lineH = probe.height / 2;
   el.style.width = (2 * charW) + 'px';
   el.style.height = lineH + 'px';
   const px = (1 + ball.x * 2) * charW;
