@@ -341,6 +341,12 @@ document.addEventListener('keydown', e => {
   if (e.key === 'ArrowUp') { e.preventDefault(); setDir(-1); }
   if (e.key === 'ArrowDown') { e.preventDefault(); setDir(1); }
 });
+document.getElementById('linkbar').addEventListener('click', () => {
+  if (shareLink && navigator.clipboard) {
+    navigator.clipboard.writeText(shareLink).then(() => { linkCopied = true; }).catch(() => {});
+  }
+});
+
 document.addEventListener('keyup', e => {
   if (e.key === 'ArrowUp' && moveDir === -1) setDir(0);
   if (e.key === 'ArrowDown' && moveDir === 1) setDir(0);
