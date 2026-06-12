@@ -19,7 +19,6 @@
     line-height: 1.15;
     letter-spacing: 0.12em;
     font-weight: 500;
-    text-transform: uppercase;
     margin: 0;
   }
   #stage { position: relative; }
@@ -63,7 +62,7 @@ let remoteDir = 0;   // guest's input, as received by the host
 let flash = null;    // {who: 'L'|'R', toward, t} — point-scored animation
 
 let peer = null, conn = null;
-let shareLink = '', netStatus = '';
+let shareLink = '', netStatus = '', linkCopied = false;
 let guestReady = false; // guest has received at least one state frame
 
 function serve(toward) {
@@ -138,7 +137,11 @@ function hostGame() {
   peer.on('open', () => {
     shareLink = location.href.split('#')[0] + '#' + id;
     netStatus = 'WAITING FOR PLAYER 2...';
-    if (navigator.clipboard) navigator.clipboard.writeText(shareLink).catch(() => {});
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(shareLink)
+        .then(() => { linkCopied = true; })
+        .catch(() => {});
+    }
   });
   peer.on('connection', c => {
     if (conn) { c.close(); return; } // room is full
@@ -252,7 +255,10 @@ function draw() {
       header = 'PONG — TWO PLAYER';
       footer = netStatus + '\n';
       if (mode === 'host-wait' && shareLink) {
-        footer += 'SEND THIS LINK TO PLAYER 2 (COPIED TO CLIPBOARD):\n' + shareLink + '\n';
+        footer += 'SEND THIS LINK TO PLAYER 2' + (linkCopied ? ' (COPIED TO CLIPBOARD)' : '') + ':\n' + shareLink + '\n';
+        if (location.protocol === 'file:') {
+          footer += '\nNOTE: A FILE:// LINK ONLY WORKS ON THIS COMPUTER.\nUSE THE HOSTED VERSION TO PLAY ACROSS MACHINES.\n';
+        }
       }
     }
     document.getElementById('screen').textContent = frame(grid, header, footer);
